@@ -1,12 +1,22 @@
 import express from "express";
 import fetch from "node-fetch";
+import cors from "cors";
 
 const app = express();
 
+// ✅ Enable CORS (so Shopify storefront can call this API)
+app.use(cors({
+  origin: ["https://jrgbun-ps.myshopify.com", "https://arclyfe.com"],
+  methods: ["GET"],
+  allowedHeaders: ["Content-Type", "X-Shopify-Access-Token"],
+}));
+
+// Health check / root
 app.get("/", (req, res) => {
   res.send("Tracking Portal API is live ✅");
 });
 
+// Main tracking endpoint
 app.get("/track", async (req, res) => {
   const { order, email } = req.query;
 
@@ -91,3 +101,4 @@ app.get("/track", async (req, res) => {
 });
 
 app.listen(3000, () => console.log("✅ Tracking Portal API running on port 3000"));
+
