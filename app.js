@@ -4,19 +4,22 @@ import cors from "cors";
 
 const app = express();
 
-// ✅ Enable CORS (so Shopify storefront can call this API)
+// ✅ Allow Shopify frontend to call this API
 app.use(cors({
-  origin: ["https://jrgbun-ps.myshopify.com", "https://arclyfe.com"],
+  origin: [
+    "https://jrgbun-ps.myshopify.com",
+    "https://arclyfe.com"
+  ],
   methods: ["GET"],
-  allowedHeaders: ["Content-Type", "X-Shopify-Access-Token"],
+  allowedHeaders: ["Content-Type", "X-Shopify-Access-Token"]
 }));
 
-// Health check / root
+// Health check
 app.get("/", (req, res) => {
   res.send("Tracking Portal API is live ✅");
 });
 
-// Main tracking endpoint
+// Main /track route
 app.get("/track", async (req, res) => {
   const { order, email } = req.query;
 
@@ -36,8 +39,8 @@ app.get("/track", async (req, res) => {
       headers: {
         "X-Shopify-Access-Token": token,
         "User-Agent": "Arclyfe-Tracking-App (tracking@arclyfe.com)",
-        "Content-Type": "application/json",
-      },
+        "Content-Type": "application/json"
+      }
     });
 
     console.log("🧾 Shopify Response Status:", response.status);
@@ -49,7 +52,7 @@ app.get("/track", async (req, res) => {
       return res.status(response.status).json({
         success: false,
         message: `Shopify API Error (${response.status})`,
-        body: text,
+        body: text
       });
     }
 
@@ -73,29 +76,29 @@ app.get("/track", async (req, res) => {
       order_number: orderData.name,
       customer: {
         name: `${orderData.customer?.first_name || ""} ${orderData.customer?.last_name || ""}`.trim(),
-        email: orderData.email || null,
+        email: orderData.email || null
       },
       shipping_address: orderData.shipping_address || null,
       line_items: (orderData.line_items || []).map(i => ({
         name: i.title,
         variant: i.variant_title,
         quantity: i.quantity,
-        price: i.price,
+        price: i.price
       })),
       tracking: f
         ? {
             number: f.tracking_number || null,
             carrier: f.tracking_company || null,
-            status: f.shipment_status || null,
+            status: f.shipment_status || null
           }
-        : null,
+        : null
     });
   } catch (err) {
     console.error("💥 SERVER ERROR:", err);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: err.message,
+      error: err.message
     });
   }
 });
