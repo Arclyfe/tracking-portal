@@ -3,18 +3,15 @@ import fetch from "node-fetch";
 
 const app = express();
 
-// Root endpoint
 app.get("/", (req, res) => {
   res.send("Tracking Portal API is live ✅");
 });
 
-// ============================
-// MAIN TRACKING ENDPOINT
-// ============================
 app.get("/track", async (req, res) => {
   const { order, email } = req.query;
 
   if (!order || !email) {
+    console.log("❌ Missing order or email");
     return res.json({ success: false, message: "Missing order or email" });
   }
 
@@ -22,43 +19,45 @@ app.get("/track", async (req, res) => {
     const shop = process.env.SHOPIFY_STORE;
     const token = process.env.SHOPIFY_ADMIN_TOKEN;
 
-    // ✅ Fetch orders by customer email (Shopify supports this)
-    const response = await fetch(
-      `https://${shop}/admin/api/2024-10/orders.json?email=${encodeURIComponent(email)}`,
-      {
-        headers: {
-          "X-Shopify-Access-Token": token,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    const url = `https://${shop}/admin/api/2024-10/orders.json?name=${encodeURIComponent('#' + order)}`;
+    console.log("🔍 Fetching Shopify URL:", url);
 
-    const data = await response.json();
+    const response = await fetch(url, {
+      headers: {
+        "X-Shopify-Access-Token": token,
+        "User-Agent": "Arclyfe-Tracking-App (tracking@arclyfe.com)",
+        "Content-Type": "application/json",
+      },
+    });
 
-    if (!data.orders || data.orders.length === 0) {
-      return res.json({ success: false, message: "No orders found for that email." });
-    }
+    console.log("🧾 Shopify Response Status:", response.status);
 
-    // ✅ Find the order that matches the provided order number (e.g., #1297)
-    const orderData = data.orders.find(
-      (o) => o.name === `#${order}` || o.name === order
-    );
+    const text = await response.text();
+    console.log("📦 Shopify Raw Response:", text);
 
-    if (!orderData) {
-      return res.json({
+    if (!response.ok) {
+      return res.status(response.status).json({
         success: false,
-        message: "Order not found for this email.",
+        message: `Shopify API Error (${response.status})`,
+        body: text,
       });
     }
 
-    // Optional secondary email check
-    if ((orderData.email || "").toLowerCase() !== (email || "").toLowerCase()) {
-      return res.json({ success: false, message: "Email mismatch." });
+    const data = JSON.parse(text);
+    const orderData = data.orders?.[0];
+
+    if (!orderData) {
+      console.log("⚠️ No orders found for:", order);
+      return res.json({ success: false, message: "Order not found" });
     }
 
-    const fulfillment = orderData.fulfillments?.[0] || null;
+    if ((orderData.email || "").toLowerCase() !== (email || "").toLowerCase()) {
+      console.log("⚠️ Email mismatch");
+      return res.json({ success: false, message: "Email mismatch" });
+    }
 
-    // ✅ Return cleaned and formatted order info
+    const f = orderData.fulfillments?.[0] || null;
+
     res.json({
       success: true,
       order_number: orderData.name,
@@ -67,25 +66,28 @@ app.get("/track", async (req, res) => {
         email: orderData.email || null,
       },
       shipping_address: orderData.shipping_address || null,
-      line_items: (orderData.line_items || []).map((i) => ({
+      line_items: (orderData.line_items || []).map(i => ({
         name: i.title,
         variant: i.variant_title,
         quantity: i.quantity,
         price: i.price,
       })),
-      tracking: fulfillment
+      tracking: f
         ? {
-            number: fulfillment.tracking_number || null,
-            carrier: fulfillment.tracking_company || null,
-            status: fulfillment.shipment_status || null,
+            number: f.tracking_number || null,
+            carrier: f.tracking_company || null,
+            status: f.shipment_status || null,
           }
         : null,
     });
   } catch (err) {
-    console.error("💥 Server error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("💥 SERVER ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message,
+    });
   }
 });
 
 app.listen(3000, () => console.log("✅ Tracking Portal API running on port 3000"));
-
