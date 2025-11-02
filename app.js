@@ -4,74 +4,91 @@ import cors from "cors";
 
 const app = express();
 
-// ✅ Allow Shopify frontend to call this API
+// ✅ Allow your Shopify storefront and main domain
 app.use(cors({
-  origin: [
-    "https://jrgbun-ps.myshopify.com",
-    "https://arclyfe.com"
-  ],
+  origin: ["https://jrgbun-ps.myshopify.com", "https://arclyfe.com"],
   methods: ["GET"],
   allowedHeaders: ["Content-Type", "X-Shopify-Access-Token"]
 }));
 
-// Health check
-app.get("/", (req, res) => {
+// Config
+const API_VERSION = process.env.SHOPIFY_API_VERSION || "2025-10";
+
+app.get("/", (_req, res) => {
   res.send("Tracking Portal API is live ✅");
 });
 
-// Main /track route
 app.get("/track", async (req, res) => {
-  const { order, email } = req.query;
-
-  if (!order || !email) {
-    console.log("❌ Missing order or email");
-    return res.json({ success: false, message: "Missing order or email" });
-  }
-
   try {
+    let { order, email } = req.query;
+    order = (order || "").trim();
+    email = (email || "").trim();
+
+    if (!order || !email) {
+      console.log("❌ Missing order or email");
+      return res.json({ success: false, message: "Missing order or email" });
+    }
+
     const shop = process.env.SHOPIFY_STORE;
     const token = process.env.SHOPIFY_ADMIN_TOKEN;
 
-    const url = `https://${shop}/admin/api/2024-10/orders.json?name=${encodeURIComponent('#' + order)}`;
-    console.log("🔍 Fetching Shopify URL:", url);
+    // Normalize: accept "1297" or "#1297" in form input
+    const cleanName = order.startsWith("#") ? order : `#${order}`;
 
-    const response = await fetch(url, {
+    // 1) Try by order "name"
+    const nameUrl = `https://${shop}/admin/api/${API_VERSION}/orders.json?name=${encodeURIComponent(cleanName)}`;
+    console.log("🔍 Fetch by name:", nameUrl);
+
+    let r = await fetch(nameUrl, {
       headers: {
         "X-Shopify-Access-Token": token,
-        "User-Agent": "Arclyfe-Tracking-App (tracking@arclyfe.com)",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "User-Agent": "Arclyfe-Tracking-App (tracking@arclyfe.com)"
       }
     });
+    console.log("🧾 Name lookup status:", r.status);
+    let raw = await r.text();
+    console.log("📦 Name lookup raw:", raw);
 
-    console.log("🧾 Shopify Response Status:", response.status);
-
-    const text = await response.text();
-    console.log("📦 Shopify Raw Response:", text);
-
-    if (!response.ok) {
-      return res.status(response.status).json({
-        success: false,
-        message: `Shopify API Error (${response.status})`,
-        body: text
-      });
+    if (!r.ok) {
+      return res.status(r.status).json({ success: false, message: `Shopify API Error (${r.status})`, body: raw });
     }
 
-    const data = JSON.parse(text);
-    const orderData = data.orders?.[0];
+    let data = JSON.parse(raw);
+    let orderData = data.orders?.[0];
+
+    // 2) Fallback: if no match and input is a pure number, try treating it as the numeric order ID
+    if (!orderData && /^\d+$/.test(order)) {
+      const idUrl = `https://${shop}/admin/api/${API_VERSION}/orders/${order}.json`;
+      console.log("🔁 Fallback by ID:", idUrl);
+
+      const r2 = await fetch(idUrl, {
+        headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" }
+      });
+      console.log("🧾 ID lookup status:", r2.status);
+      const raw2 = await r2.text();
+      console.log("📦 ID lookup raw:", raw2);
+
+      if (r2.ok) {
+        const d2 = JSON.parse(raw2);
+        if (d2.order) orderData = d2.order;
+      }
+    }
 
     if (!orderData) {
-      console.log("⚠️ No orders found for:", order);
+      console.log("⚠️ No order found after name+ID attempts for:", order);
       return res.json({ success: false, message: "Order not found" });
     }
 
-    if ((orderData.email || "").toLowerCase() !== (email || "").toLowerCase()) {
-      console.log("⚠️ Email mismatch");
+    // Basic email check (Shopify stores email on order)
+    if ((orderData.email || "").toLowerCase() !== email.toLowerCase()) {
+      console.log("⚠️ Email mismatch for", orderData.name);
       return res.json({ success: false, message: "Email mismatch" });
     }
 
     const f = orderData.fulfillments?.[0] || null;
 
-    res.json({
+    return res.json({
       success: true,
       order_number: orderData.name,
       customer: {
@@ -85,21 +102,15 @@ app.get("/track", async (req, res) => {
         quantity: i.quantity,
         price: i.price
       })),
-      tracking: f
-        ? {
-            number: f.tracking_number || null,
-            carrier: f.tracking_company || null,
-            status: f.shipment_status || null
-          }
-        : null
+      tracking: f ? {
+        number: f.tracking_number || null,
+        carrier: f.tracking_company || null,
+        status: f.shipment_status || null
+      } : null
     });
   } catch (err) {
     console.error("💥 SERVER ERROR:", err);
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: err.message
-    });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
